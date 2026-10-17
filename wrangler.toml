@@ -1,0 +1,16 @@
+name = "ten-to-one"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+# Password for the /admin page. Change it to anything you like before deploying.
+[vars]
+ADMIN_KEY = "change-me-123"
+
+# The shared group: one Durable Object with built-in SQLite. Created automatically on deploy.
+[[durable_objects.bindings]]
+name = "GROUP"
+class_name = "Group"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Group"]
