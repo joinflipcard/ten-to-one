@@ -107,15 +107,34 @@ export default {
 
     if (url.pathname === '/api/profiles') return group().fetch(request);
 
-    // /admin?key=YOUR_ADMIN_KEY lists everyone with a Remove button.
-    if (url.pathname === '/admin') {
+    // /admin?key=YOUR_ADMIN_KEY — everything people saved, with Remove buttons and exports.
+    if (url.pathname === '/admin' || url.pathname === '/admin/export.csv' || url.pathname === '/admin/export.json') {
       if (!isAdmin(request, env)) return new Response('Add ?key=YOUR_ADMIN_KEY to the address. The key is set in wrangler.toml (or Settings → Variables).', { status: 401 });
       const { profiles } = await (await group().fetch(new Request(url.origin + '/api/profiles'))).json();
-      const rows = profiles.map(p => `<tr><td>${esc(p.name)}, ${p.age} (${p.gender}→${p.seeking.join('')})</td><td>${esc(p.bio || '')}</td><td>${new Date(p.updatedAt).toLocaleString()}</td><td><button data-id="${esc(p.id)}">Remove</button></td></tr>`).join('');
+      const key = url.searchParams.get('key') || '';
+      const LABELS = { self: 'About me', want: 'My type', activities: 'Activities', music: 'Music', drinks: 'Drinks', foods: 'Foods', holidays: 'Holidays', vacation: 'Vacation', movies: 'Movies' };
+      const orderText = (p, k) => p.done && p.done[k] ? p.ranks[k].map((id, i) => `${10 - i} ${id}`).join(' · ') : '';
+      if (url.pathname === '/admin/export.json') return json({ exportedAt: new Date().toISOString(), count: profiles.length, profiles });
+      if (url.pathname === '/admin/export.csv') {
+        const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+        const head = ['name', 'age', 'gender', 'seeking', 'age_min', 'age_max', 'bio', 'updated', ...Object.keys(LABELS).map(k => LABELS[k] + ' (10 → 1)')];
+        const lines = [head.map(cell).join(',')];
+        for (const p of profiles) lines.push([p.name, p.age, p.gender, p.seeking.join('+'), p.ageMin, p.ageMax, p.bio || '', new Date(p.updatedAt).toISOString(), ...Object.keys(LABELS).map(k => p.done && p.done[k] ? p.ranks[k].join(' > ') : '')].map(cell).join(','));
+        return new Response('﻿' + lines.join('\r\n'), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="ten-to-one-profiles.csv"', 'cache-control': 'no-store' } });
+      }
+      const rows = profiles.map(p => {
+        const lists = Object.keys(LABELS).map(k => orderText(p, k) ? `<div class="l"><b>${LABELS[k]}</b> ${esc(orderText(p, k))}</div>` : '').join('');
+        const listsDone = Object.keys(LABELS).filter(k => p.done && p.done[k]).length;
+        return `<details class="p"><summary><span class="n">${esc(p.name)}, ${p.age}</span> <span class="m">${p.gender === 'M' ? 'man' : 'woman'} · looking for ${p.seeking.length === 2 ? 'men & women' : p.seeking[0] === 'M' ? 'men' : 'women'} ${p.ageMin}–${p.ageMax} · ${listsDone} of 9 lists · ${new Date(p.updatedAt).toLocaleString()}</span></summary>
+          ${p.bio ? `<p class="b">“${esc(p.bio)}”</p>` : ''}${lists}<button data-id="${esc(p.id)}">Remove ${esc(p.name)}</button></details>`;
+      }).join('');
       const page = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ten to One admin</title>
-<style>body{font:15px system-ui;margin:24px;color:#231A21}table{border-collapse:collapse;width:100%}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}button{font:inherit;padding:4px 10px}</style>
-<h1>${profiles.length} profile${profiles.length === 1 ? '' : 's'}</h1><table><tr><th>Who</th><th>Bio</th><th>Updated</th><th></th></tr>${rows}</table>
-<script>document.addEventListener('click',async e=>{const b=e.target.closest('button[data-id]');if(!b||!confirm('Remove this profile?'))return;const r=await fetch('/api/profiles',{method:'DELETE',headers:{'content-type':'application/json','x-admin-key':${JSON.stringify(env.ADMIN_KEY)}},body:JSON.stringify({id:b.dataset.id})});if(r.ok)b.closest('tr').remove();else alert('Could not remove');});</script>`;
+<style>body{font:15px/1.5 system-ui;margin:0;padding:20px;color:#231A21;background:#FFF7F5;max-width:760px;margin:0 auto}h1{font-size:24px;margin:0 0 4px}.tools{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 18px}.tools a{color:#FF4D6D;font-weight:700}.p{background:#fff;border:1px solid #F3E1DD;border-radius:14px;padding:12px 14px;margin-bottom:10px}summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}.n{font-weight:800;font-size:17px}.m{color:#7C6E78;font-size:13px;display:block}.b{font-style:italic;margin:8px 0}.l{font-size:13px;margin:6px 0;color:#444}.l b{color:#231A21;display:inline-block;min-width:84px}button{font:inherit;margin-top:10px;padding:6px 12px;border-radius:999px;border:1px solid #F3E1DD;background:#fff;color:#D64545;cursor:pointer}</style>
+<h1>${profiles.length} profile${profiles.length === 1 ? '' : 's'}</h1>
+<div class="tools"><a href="/admin/export.csv?key=${encodeURIComponent(key)}">Download CSV (opens in Excel/Numbers)</a><a href="/admin/export.json?key=${encodeURIComponent(key)}">Raw JSON</a></div>
+<p style="color:#7C6E78;font-size:13px">Tap a name to see every list they ranked, top (10) to bottom (1).</p>
+${rows || '<p>No profiles yet.</p>'}
+<script>document.addEventListener('click',async e=>{const b=e.target.closest('button[data-id]');if(!b||!confirm('Remove this profile for good?'))return;const r=await fetch('/api/profiles',{method:'DELETE',headers:{'content-type':'application/json','x-admin-key':${JSON.stringify(env.ADMIN_KEY)}},body:JSON.stringify({id:b.dataset.id})});if(r.ok)b.closest('details').remove();else alert('Could not remove');});</script>`;
       return new Response(page, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
     if (url.pathname === '/health') {
